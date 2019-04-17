@@ -19,14 +19,17 @@ package rabbitmq
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/cloudevents/sdk-go/pkg/cloudevents"
 	"github.com/cloudevents/sdk-go/pkg/cloudevents/client"
 	"github.com/cloudevents/sdk-go/pkg/cloudevents/types"
-	"github.com/knative/eventing-sources/pkg/kncloudevents"
-	"github.com/knative/pkg/logging"
-	"github.com/streadway/amqp"
+	"github.com/knative/eventing-contrib/pkg/kncloudevents"
+	"github.com/sbcd90/wabbit"
+	"github.com/sbcd90/wabbit/amqp"
+	"github.com/sbcd90/wabbit/amqptest"
 	"go.uber.org/zap"
-    "strings"
+	"knative.dev/pkg/logging"
+	"strings"
 )
 
 const (
@@ -44,7 +47,6 @@ type ExchangeConfig struct {
 
 type ChannelConfig struct {
 	PrefetchCount int
-	PrefetchSize  int
 	GlobalQos     bool
 }
 
@@ -60,6 +62,8 @@ type QueueConfig struct {
 type Adapter struct {
 	Brokers        string
 	Topic          string
+	User           string
+	Password       string
 	ChannelConfig  ChannelConfig
 	ExchangeConfig ExchangeConfig
 	QueueConfig    QueueConfig
@@ -77,6 +81,39 @@ func (a *Adapter) initClient() error {
 	return nil
 }
 
+func (a *Adapter) CreateConn(User string, Password string, logger *zap.SugaredLogger) (*amqp.Conn, error) {
+	if User != "" && Password != "" {
+		a.Brokers = fmt.Sprintf("amqp://%s:%s@%s", a.User, a.Password, a.Brokers)
+	}
+	conn, err := amqp.Dial(a.Brokers)
+	if err != nil {
+		logger.Error(err)
+	}
+	return conn, err
+}
+
+func (a *Adapter) CreateChannel(conn *amqp.Conn, connTest *amqptest.Conn,
+	logger *zap.SugaredLogger) (wabbit.Channel, error) {
+	var ch wabbit.Channel
+	var err error
+
+	if conn != nil {
+		ch, err = conn.Channel()
+	} else {
+		ch, err = connTest.Channel()
+	}
+	if err != nil {
+		logger.Error(err)
+		return nil, err
+	}
+
+	err = ch.Qos(a.ChannelConfig.PrefetchCount,
+		0,
+		a.ChannelConfig.GlobalQos)
+
+	return ch, err
+}
+
 func (a *Adapter) Start(ctx context.Context, stopCh <-chan struct{}) error {
 	logger := logging.FromContext(ctx)
 
@@ -87,23 +124,14 @@ func (a *Adapter) Start(ctx context.Context, stopCh <-chan struct{}) error {
 
 	logger.Info("Starting with config: ", zap.Any("adapter", a))
 
-	conn, err := amqp.Dial(a.Brokers)
-	if err != nil {
-		logger.Error(err)
+	conn, err := a.CreateConn(a.User, a.Password, logger)
+	if err == nil {
+		defer conn.Close()
 	}
-	defer conn.Close()
 
-	ch, err := conn.Channel()
-	if err != nil {
-		logger.Error(err)
-	}
-	defer ch.Close()
-
-	err = ch.Qos(a.ChannelConfig.PrefetchCount,
-		a.ChannelConfig.PrefetchSize,
-		a.ChannelConfig.GlobalQos)
-	if err != nil {
-		logger.Error(err)
+	ch, err := a.CreateChannel(conn, nil, logger)
+	if err == nil {
+		defer ch.Close()
 	}
 
 	queue, err := a.StartAmqpClient(ctx, &ch)
@@ -111,79 +139,118 @@ func (a *Adapter) Start(ctx context.Context, stopCh <-chan struct{}) error {
 		logger.Error(err)
 	}
 
-	return a.pollForMessages(ctx, &ch, queue, stopCh)
+	return a.PollForMessages(ctx, &ch, queue, stopCh)
 }
 
 func (a *Adapter) StartAmqpClient(ctx context.Context, ch *wabbit.Channel) (*wabbit.Queue, error) {
 	logger := logging.FromContext(ctx)
 	exchangeConfig := fillDefaultValuesForExchangeConfig(&a.ExchangeConfig, a.Topic)
 
-	err = ch.ExchangeDeclare(
+	err := (*ch).ExchangeDeclare(
 		exchangeConfig.Name,
 		exchangeConfig.TypeOf,
-		exchangeConfig.Durable,
-		exchangeConfig.AutoDeleted,
-		exchangeConfig.Internal,
-		exchangeConfig.NoWait,
-		nil,)
+		wabbit.Option{
+			"durable":  exchangeConfig.Durable,
+			"delete":   exchangeConfig.AutoDeleted,
+			"internal": exchangeConfig.Internal,
+			"noWait":   exchangeConfig.NoWait,
+		},)
 	if err != nil {
 		logger.Error(err)
+		return nil, err
 	}
 
-	queue, err := ch.QueueDeclare(
+	queue, err := (*ch).QueueDeclare(
 		a.QueueConfig.Name,
-		a.QueueConfig.Durable,
-		a.QueueConfig.DeleteWhenUnused,
-		a.QueueConfig.Exclusive,
-		a.QueueConfig.NoWait,
-		nil,)
+		wabbit.Option{
+			"durable":   a.QueueConfig.Durable,
+			"delete":    a.QueueConfig.DeleteWhenUnused,
+			"exclusive": a.QueueConfig.Exclusive,
+			"noWait":    a.QueueConfig.NoWait,
+		},)
 	if err != nil {
 		logger.Error(err)
+		return nil, err
 	}
 
-	routingKeys := strings.Split(a.QueueConfig.RoutingKey, ",")
+	if a.ExchangeConfig.TypeOf != "fanout" {
+		routingKeys := strings.Split(a.QueueConfig.RoutingKey, ",")
 
-	for _, routingKey := range routingKeys {
-		err = ch.QueueBind(
-			queue.Name,
-			routingKey,
+		for _, routingKey := range routingKeys {
+			err = (*ch).QueueBind(
+				queue.Name(),
+				routingKey,
+				exchangeConfig.Name,
+				wabbit.Option{
+					"noWait": a.QueueConfig.NoWait,
+				},)
+			if err != nil {
+				logger.Error(err)
+				return nil, err
+			}
+		}
+	} else {
+		err = (*ch).QueueBind(
+			queue.Name(),
+			"",
 			exchangeConfig.Name,
-			a.QueueConfig.NoWait,
-			nil,)
+			wabbit.Option{
+				"noWait": a.QueueConfig.NoWait,
+			})
 		if err != nil {
 			logger.Error(err)
+			return nil, err
 		}
 	}
 
-	return a.pollForMessages(ctx, ch, &queue, stopCh)
+	return &queue, nil
 }
 
-func (a *Adapter) pollForMessages(ctx context.Context, channel *amqp.Channel,
-	queue *amqp.Queue, stopCh <-chan struct{}) error {
-	logger := logging.FromContext(ctx)
-
-	msgs, err := channel.Consume(
-		queue.Name,
+func (a *Adapter) ConsumeMessages(channel *wabbit.Channel,
+	queue *wabbit.Queue, logger *zap.SugaredLogger) (<-chan wabbit.Delivery, error) {
+	msgs, err := (*channel).Consume(
+		(*queue).Name(),
 		"",
-		true,
-		a.QueueConfig.Exclusive,
-		false,
-		a.QueueConfig.NoWait,
-		nil,)
+		wabbit.Option{
+			"noAck":     false,
+			"exclusive": a.QueueConfig.Exclusive,
+			"noLocal":   false,
+			"noWait":    a.QueueConfig.NoWait,
+		},)
 
 	if err != nil {
 		logger.Error(err)
 	}
+	return msgs, err
+}
+
+func (a *Adapter) PollForMessages(ctx context.Context, channel *wabbit.Channel,
+	queue *wabbit.Queue, stopCh <-chan struct{}) error {
+	logger := logging.FromContext(ctx)
+
+	msgs, _ := a.ConsumeMessages(channel, queue, logger)
 
 	for {
 		select {
 		case msg, ok := <-msgs:
 			if ok {
-				logger.Info("Received: ", zap.Any("value", string(msg.Body)))
+				logger.Info("Received: ", zap.Any("value", string(msg.Body())))
 
-				if err := a.postMessage(ctx, &msg); err != nil {
-					logger.Info("Error posting message: ", zap.Error(err))
-				}
+				go func(message *wabbit.Delivery) {
+					if err := a.postMessage(ctx, *message); err == nil {
+						logger.Info("Successfully sent event to sink")
+						err = (*channel).Ack((*message).DeliveryTag(), true)
+						if err != nil {
+							logger.Error("Sending Ack failed with Delivery Tag")
+						}
+					} else {
+						logger.Error("Sending event to sink failed: ", zap.Error(err))
+						err = (*channel).Nack((*message).DeliveryTag(), true, true)
+						if err != nil {
+							logger.Error("Sending Nack failed with Delivery Tag")
+						}
+					}
+				}(&msg)
 			} else {
 				return nil
 			}
@@ -194,35 +261,32 @@ func (a *Adapter) pollForMessages(ctx context.Context, channel *amqp.Channel,
 	}
 }
 
-func (a *Adapter) postMessage(ctx context.Context, msg *amqp.Delivery) error {
-	logger := logging.FromContext(ctx)
+func (a *Adapter) postMessage(ctx context.Context, msg wabbit.Delivery) error {
 
 	extensions := map[string]interface{}{
-		"key": string(msg.MessageId),
+		"key": string(msg.MessageId()),
 	}
 	event := cloudevents.Event{
 		Context: cloudevents.EventContextV02{
 			SpecVersion: cloudevents.CloudEventsVersionV02,
 			Type:        eventType,
-			ID:          msg.MessageId,
-			Time:        &types.Timestamp{msg.Timestamp},
+			ID:          msg.MessageId(),
+			Time:        &types.Timestamp{msg.Timestamp()},
 			Source:      *types.ParseURLRef(a.Brokers),
 			ContentType: cloudevents.StringOfApplicationJSON(),
 			Extensions:  extensions,
 		}.AsV02(),
-		Data: a.jsonEncode(ctx, msg.Body),
+		Data: a.JsonEncode(ctx, msg.Body()),
 	}
 
 	if _, err := a.client.Send(ctx, event); err != nil {
-		logger.Error("Sending event to sink failed: ", zap.Error(err))
 		return err
 	} else {
-		logger.Info("Successfully sent event to sink")
 		return nil
 	}
 }
 
-func (a *Adapter) jsonEncode(ctx context.Context, body []byte) interface{} {
+func (a *Adapter) JsonEncode(ctx context.Context, body []byte) interface{} {
 	var payload map[string]interface{}
 
 	logger := logging.FromContext(ctx)

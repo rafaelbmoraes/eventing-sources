@@ -19,11 +19,11 @@ package rabbitmq
 import (
 	"context"
 	"fmt"
-	"github.com/knative/eventing-sources/contrib/rabbitmq/pkg/apis/sources/v1alpha1"
-	"github.com/knative/eventing-sources/pkg/controller/sdk"
-	"github.com/knative/eventing-sources/pkg/controller/sinks"
-	"github.com/knative/eventing-sources/contrib/rabbitmq/pkg/reconciler/resources"
-	"github.com/knative/pkg/logging"
+	"github.com/knative/eventing-contrib/contrib/rabbitmq/pkg/apis/sources/v1alpha1"
+	"github.com/knative/eventing-contrib/pkg/controller/sdk"
+	"github.com/knative/eventing-contrib/pkg/controller/sinks"
+	"github.com/knative/eventing-contrib/contrib/rabbitmq/pkg/reconciler/resources"
+	"knative.dev/pkg/logging"
 	"go.uber.org/zap"
 	"k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -44,7 +44,7 @@ const (
 	finalizerName       = controllerAgentName
 )
 
-func Add(mgr manager.Manager) error {
+func Add(mgr manager.Manager, logger *zap.SugaredLogger) error {
 	raImage, defined := os.LookupEnv(raImageEnvVar)
 	if !defined {
 		return fmt.Errorf("required environment variable '%s' not defined", raImageEnvVar)
@@ -61,7 +61,7 @@ func Add(mgr manager.Manager) error {
 		},
 	}
 
-	return p.Add(mgr)
+	return p.Add(mgr, logger)
 }
 
 type reconciler struct {

@@ -20,9 +20,13 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/cloudevents/sdk-go/pkg/cloudevents/client"
-	"github.com/knative/eventing-sources/pkg/kncloudevents"
-	"github.com/streadway/amqp"
+	"github.com/knative/eventing-contrib/pkg/kncloudevents"
+	"github.com/sbcd90/wabbit/amqp"
+	"github.com/sbcd90/wabbit/amqptest"
+	"github.com/sbcd90/wabbit/amqptest/server"
+	origamqp "github.com/streadway/amqp"
 	"io/ioutil"
+	"knative.dev/pkg/logging"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -84,7 +88,8 @@ func TestPostMessage_ServeHttp(t *testing.T) {
 				t.Errorf("unexpected error, %v", err)
 			}
 
-			m := &amqp.Delivery{
+			m := &amqp.Delivery{}
+			m.Delivery = &origamqp.Delivery{
 				MessageId: "id",
 				Body:      []byte(data),
 			}
@@ -108,6 +113,300 @@ func TestPostMessage_ServeHttp(t *testing.T) {
 				t.Errorf("Expected request body '%q', but got '%q'", tc.reqBody, h.body)
 			}
 		})
+	}
+}
+
+func TestAdapter_CreateConn(t *testing.T) {
+	fakeServer := server.NewServer("amqp://localhost:5672/%2f")
+	err := fakeServer.Start()
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	a := &Adapter{
+		Topic:          "",
+		Brokers:        "amqp://localhost:5672/%2f",
+		ExchangeConfig: ExchangeConfig{
+			TypeOf:      "direct",
+			Durable:     true,
+			AutoDeleted: false,
+			Internal:    false,
+			NoWait:      false,
+		},
+		QueueConfig:   QueueConfig{
+			Name:             "",
+			Durable:          false,
+			DeleteWhenUnused: false,
+			Exclusive:        true,
+			NoWait:           false,
+		},
+	}
+
+	conn, _ := a.CreateConn("", "", logging.FromContext(context.TODO()))
+	if conn != nil {
+		t.Errorf("Failed to connect to RabbitMQ")
+	}
+
+	conn, _ = a.CreateConn("guest", "guest", logging.FromContext(context.TODO()))
+	if conn != nil {
+		t.Errorf("Failed to connect to RabbitMQ")
+	}
+	fakeServer.Stop()
+}
+
+func TestAdapter_CreateChannel(t *testing.T) {
+	fakeServer := server.NewServer("amqp://localhost:5672/%2f")
+	err := fakeServer.Start()
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	conn, err := amqptest.Dial("amqp://localhost:5672/%2f")
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	a := &Adapter{
+		Topic:          "",
+		Brokers:        "amqp://localhost:5672/%2f",
+		ExchangeConfig: ExchangeConfig{
+			TypeOf:      "direct",
+			Durable:     true,
+			AutoDeleted: false,
+			Internal:    false,
+			NoWait:      false,
+		},
+		QueueConfig:   QueueConfig{
+			Name:             "",
+			Durable:          false,
+			DeleteWhenUnused: false,
+			Exclusive:        true,
+			NoWait:           false,
+		},
+	}
+
+	for i := 1; i <= 10000; i++ {
+		channel, _ := a.CreateChannel(nil, conn, logging.FromContext(context.TODO()))
+		if channel == nil {
+			t.Logf("Failed to open a channel")
+			break
+		}
+	}
+	fakeServer.Stop()
+}
+
+func TestAdapter_StartAmqpClient(t *testing.T) {
+
+	/**
+	Test for exchange type "direct"
+	 */
+	fakeServer := server.NewServer("amqp://localhost:5672/%2f")
+	err := fakeServer.Start()
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	conn, err := amqptest.Dial("amqp://localhost:5672/%2f")
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	channel, err := conn.Channel()
+	if err != nil {
+		t.Errorf("Failed to open a channel")
+	}
+
+	a := &Adapter{
+		Topic:          "",
+		Brokers:        "amqp://localhost:5672/%2f",
+		ExchangeConfig: ExchangeConfig{
+			TypeOf:      "direct",
+			Durable:     true,
+			AutoDeleted: false,
+			Internal:    false,
+			NoWait:      false,
+		},
+		QueueConfig:   QueueConfig{
+			Name:             "",
+			Durable:          false,
+			DeleteWhenUnused: false,
+			Exclusive:        true,
+			NoWait:           false,
+		},
+	}
+
+	_, err = a.StartAmqpClient(context.TODO(), &channel)
+	if err != nil {
+		t.Errorf("Failed to start RabbitMQ")
+	}
+
+	/**
+	Test for exchange type "fanout"
+	 */
+	a = &Adapter{
+		Topic:          "",
+		Brokers:        "amqp://localhost:5672/%2f",
+		ExchangeConfig: ExchangeConfig{
+			TypeOf:      "fanout",
+			Durable:     true,
+			AutoDeleted: false,
+			Internal:    false,
+			NoWait:      false,
+		},
+		QueueConfig:   QueueConfig{
+			Name:             "",
+			Durable:          false,
+			DeleteWhenUnused: false,
+			Exclusive:        true,
+			NoWait:           false,
+		},
+	}
+	_, err = a.StartAmqpClient(context.TODO(), &channel)
+	if err != nil {
+		t.Errorf("Failed to start RabbitMQ")
+	}
+
+	/**
+	Test for exchange type "topic"
+	 */
+	a = &Adapter{
+		Topic:          "",
+		Brokers:        "amqp://localhost:5672/%2f",
+		ExchangeConfig: ExchangeConfig{
+			TypeOf:      "topic",
+			Durable:     true,
+			AutoDeleted: false,
+			Internal:    false,
+			NoWait:      false,
+		},
+		QueueConfig:   QueueConfig{
+			Name:             "",
+			Durable:          false,
+			DeleteWhenUnused: false,
+			Exclusive:        true,
+			NoWait:           false,
+		},
+	}
+	_, err = a.StartAmqpClient(context.TODO(), &channel)
+	if err != nil {
+		t.Errorf("Failed to start RabbitMQ")
+	}
+
+	fakeServer.Stop()
+}
+
+func TestAdapter_StartAmqpClient_InvalidExchangeType(t *testing.T) {
+	/**
+	Test for invalid exchange type
+	 */
+	fakeServer := server.NewServer("amqp://localhost:5674/%2f")
+	err := fakeServer.Start()
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	conn, err := amqptest.Dial("amqp://localhost:5674/%2f")
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	channel, err := conn.Channel()
+	if err != nil {
+		t.Errorf("Failed to open a channel")
+	}
+
+	a := &Adapter{
+		Topic:          "",
+		Brokers:        "amqp://localhost:5674/%2f",
+		ExchangeConfig: ExchangeConfig{
+			TypeOf:      "",
+			Durable:     true,
+			AutoDeleted: false,
+			Internal:    false,
+			NoWait:      false,
+		},
+		QueueConfig:   QueueConfig{
+			Name:             "",
+			Durable:          false,
+			DeleteWhenUnused: false,
+			Exclusive:        true,
+			NoWait:           false,
+		},
+	}
+	_, err = a.StartAmqpClient(context.TODO(), &channel)
+	if err != nil {
+		t.Logf("Failed to start RabbitMQ")
+	}
+	fakeServer.Stop()
+}
+
+func TestAdapter_ConsumeMessages(t *testing.T) {
+	fakeServer := server.NewServer("amqp://localhost:5672/%2f")
+	err := fakeServer.Start()
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	conn, err := amqptest.Dial("amqp://localhost:5672/%2f")
+	if err != nil {
+		t.Errorf("%s: %s", "Failed to connect to RabbitMQ", err)
+	}
+
+	channel, err := conn.Channel()
+	if err != nil {
+		t.Errorf("Failed to open a channel")
+	}
+
+	a := &Adapter{
+		Topic:          "",
+		Brokers:        "amqp://localhost:5672/%2f",
+		ExchangeConfig: ExchangeConfig{
+			TypeOf:      "direct",
+			Durable:     true,
+			AutoDeleted: false,
+			Internal:    false,
+			NoWait:      false,
+		},
+		QueueConfig:   QueueConfig{
+			Name:             "",
+			Durable:          false,
+			DeleteWhenUnused: false,
+			Exclusive:        true,
+			NoWait:           false,
+		},
+	}
+	queue, err := a.StartAmqpClient(context.TODO(), &channel)
+	if err != nil {
+		t.Errorf("Failed to start RabbitMQ")
+	}
+	_, err = a.ConsumeMessages(&channel, queue, logging.FromContext(context.TODO()))
+	if err != nil {
+		t.Errorf("Failed to consume from RabbitMQ")
+	}
+}
+
+func TestAdapter_JsonEncode(t *testing.T) {
+	a := &Adapter{
+		Topic:          "",
+		Brokers:        "amqp://localhost:5672/%2f",
+		ExchangeConfig: ExchangeConfig{
+			TypeOf:      "direct",
+			Durable:     true,
+			AutoDeleted: false,
+			Internal:    false,
+			NoWait:      false,
+		},
+		QueueConfig:   QueueConfig{
+			Name:             "",
+			Durable:          false,
+			DeleteWhenUnused: false,
+			Exclusive:        true,
+			NoWait:           false,
+		},
+	}
+	data := a.JsonEncode(context.TODO(), []byte("test json"))
+	if data == nil {
+		t.Errorf("Json decoded incorrectly")
 	}
 }
 

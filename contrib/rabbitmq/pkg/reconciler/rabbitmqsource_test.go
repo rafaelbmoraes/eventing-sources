@@ -22,10 +22,10 @@ import (
 	"fmt"
 	"testing"
 
-	sourcesv1alpha1 "github.com/knative/eventing-sources/contrib/rabbitmq/pkg/apis/sources/v1alpha1"
-	genericv1alpha1 "github.com/knative/eventing-sources/pkg/apis/sources/v1alpha1"
-	controllertesting "github.com/knative/eventing-sources/pkg/controller/testing"
-	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
+	sourcesv1alpha1 "github.com/knative/eventing-contrib/contrib/rabbitmq/pkg/apis/sources/v1alpha1"
+	eventingsourcesv1alpha1 "github.com/knative/eventing/pkg/apis/sources/v1alpha1"
+	controllertesting "github.com/knative/eventing-contrib/pkg/controller/testing"
+	duckv1alpha1 "knative.dev/pkg/apis/duck/v1alpha1"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,7 +55,7 @@ const (
 	addressableKind       = "Sink"
 	addressableAPIVersion = "duck.knative.dev/v1alpha1"
 	addressableDNS        = "addressable.sink.svc.cluster.local"
-	addressableURI        = "http://addressable.sink.svc.cluster.local/"
+	addressableURI        = "http://addressable.sink.svc.cluster.local"
 )
 
 func init() {
@@ -63,7 +63,7 @@ func init() {
 	v1.AddToScheme(scheme.Scheme)
 	corev1.AddToScheme(scheme.Scheme)
 	sourcesv1alpha1.SchemeBuilder.AddToScheme(scheme.Scheme)
-	genericv1alpha1.SchemeBuilder.AddToScheme(scheme.Scheme)
+	eventingsourcesv1alpha1.SchemeBuilder.AddToScheme(scheme.Scheme)
 	duckv1alpha1.AddToScheme(scheme.Scheme)
 }
 
@@ -174,16 +174,23 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
-func getNonRabbitmqSource() *genericv1alpha1.ContainerSource {
-	obj := &genericv1alpha1.ContainerSource{
+func getNonRabbitmqSource() *eventingsourcesv1alpha1.ContainerSource {
+	obj := &eventingsourcesv1alpha1.ContainerSource{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: genericv1alpha1.SchemeGroupVersion.String(),
+			APIVersion: eventingsourcesv1alpha1.SchemeGroupVersion.String(),
 			Kind:       "ContainerSource",
 		},
 		ObjectMeta: om(testNS, sourceName),
-		Spec: genericv1alpha1.ContainerSourceSpec{
-			Image: image,
-			Args:  []string(nil),
+		Spec: eventingsourcesv1alpha1.ContainerSourceSpec{
+			Template: &corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Image: image,
+						Args:  []string(nil),
+					},
+					},
+				},
+			},
 			Sink: &corev1.ObjectReference{
 				Name:       addressableName,
 				Kind:       addressableKind,

@@ -20,7 +20,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"testing"
-	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
+	duckv1alpha1 "knative.dev/pkg/apis/duck/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
 

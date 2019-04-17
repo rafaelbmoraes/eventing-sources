@@ -17,9 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"github.com/knative/pkg/apis"
-	"github.com/knative/pkg/apis/duck"
-	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
+	"knative.dev/pkg/apis/duck"
+	duckv1alpha1 "knative.dev/pkg/apis/duck/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,17 +41,12 @@ type RabbitmqSource struct {
 
 var _ runtime.Object = (*RabbitmqSource)(nil)
 
-var _ apis.Immutable = (*RabbitmqSource)(nil)
-
 var _  = duck.VerifyType(&RabbitmqSource{}, &duckv1alpha1.Conditions{})
 
 type RabbitmqChannelConfigSpec struct {
 	// Channel Prefetch count
 	// +optional
 	PrefetchCount int  `json:"prefetch_count,omitempty"`
-	// Channel Prefetch size
-	// +optional
-	PrefetchSize  int  `json:"prefetch_size,omitempty"`
 	// Channel Qos global property
 	// +optional
 	GlobalQos     bool `json:"global_qos,omitempty"`
@@ -112,6 +106,12 @@ type RabbitmqSourceSpec struct {
 	// Topic topic to consume messages from
 	// +required
 	Topic   string `json:"topic,omitempty"`
+	// User for rabbitmq connection
+	// +optional
+	User SecretValueFromSource `json:"user,omitempty"`
+	// Password for rabbitmq connection
+	// +optional
+	Password SecretValueFromSource `json:"password,omitempty"`
 	// ChannelConfig config for rabbitmq exchange
 	// +optional
 	ChannelConfig  RabbitmqChannelConfigSpec `json:"channel_config,omitempty"`
@@ -127,6 +127,12 @@ type RabbitmqSourceSpec struct {
 	// ServiceAccoutName is the name of the ServiceAccount that will be used to run the Receive
 	// Adapter Deployment.
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+}
+
+// SecretValueFromSource represents the source of a secret value
+type SecretValueFromSource struct {
+	// The Secret key to select from.
+	SecretKeyRef *corev1.SecretKeySelector `json:"secretKeyRef,omitempty"`
 }
 
 const (

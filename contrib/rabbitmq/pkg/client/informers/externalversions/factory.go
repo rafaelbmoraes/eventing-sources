@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Knative Authors
+Copyright 2019 The Knative Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,9 +23,9 @@ import (
 	sync "sync"
 	time "time"
 
-	versioned "github.com/knative/eventing-sources/contrib/rabbitmq/pkg/client/clientset/versioned"
-	internalinterfaces "github.com/knative/eventing-sources/contrib/rabbitmq/pkg/client/informers/externalversions/internalinterfaces"
-	sources "github.com/knative/eventing-sources/contrib/rabbitmq/pkg/client/informers/externalversions/sources"
+	versioned "github.com/knative/eventing-contrib/contrib/rabbitmq/pkg/client/clientset/versioned"
+	internalinterfaces "github.com/knative/eventing-contrib/contrib/rabbitmq/pkg/client/informers/externalversions/internalinterfaces"
+	sources "github.com/knative/eventing-contrib/contrib/rabbitmq/pkg/client/informers/externalversions/sources"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

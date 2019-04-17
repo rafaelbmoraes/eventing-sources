@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The Knative Authors
+Copyright 2019 The Knative Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1alpha1 "github.com/knative/eventing-sources/contrib/rabbitmq/pkg/apis/sources/v1alpha1"
-	"github.com/knative/eventing-sources/contrib/rabbitmq/pkg/client/clientset/versioned/scheme"
+	v1alpha1 "github.com/knative/eventing-contrib/contrib/rabbitmq/pkg/apis/sources/v1alpha1"
+	"github.com/knative/eventing-contrib/contrib/rabbitmq/pkg/client/clientset/versioned/scheme"
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	rest "k8s.io/client-go/rest"
 )
