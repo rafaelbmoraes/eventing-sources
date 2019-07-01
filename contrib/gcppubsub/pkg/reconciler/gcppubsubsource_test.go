@@ -23,16 +23,18 @@ import (
 	"testing"
 
 	"cloud.google.com/go/pubsub"
-	sourcesv1alpha1 "github.com/knative/eventing-sources/contrib/gcppubsub/pkg/apis/sources/v1alpha1"
-	genericv1alpha1 "github.com/knative/eventing-sources/pkg/apis/sources/v1alpha1"
-	controllertesting "github.com/knative/eventing-sources/pkg/controller/testing"
-	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
+	sourcesv1alpha1 "github.com/knative/eventing-contrib/contrib/gcppubsub/pkg/apis/sources/v1alpha1"
+	controllertesting "github.com/knative/eventing-contrib/pkg/controller/testing"
+	"github.com/knative/eventing-contrib/pkg/reconciler/eventtype"
+	eventingv1alpha1 "github.com/knative/eventing/pkg/apis/eventing/v1alpha1"
+	eventingsourcesv1alpha1 "github.com/knative/eventing/pkg/apis/sources/v1alpha1"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
+	duckv1alpha1 "knative.dev/pkg/apis/duck/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -54,11 +56,13 @@ const (
 	sourceUID  = "1234-5678-90"
 	testNS     = "testnamespace"
 
-	addressableName       = "testsink"
-	addressableKind       = "Sink"
-	addressableAPIVersion = "duck.knative.dev/v1alpha1"
-	addressableDNS        = "addressable.sink.svc.cluster.local"
-	addressableURI        = "http://addressable.sink.svc.cluster.local/"
+	addressableName            = "testsink"
+	addressableKind            = "Sink"
+	brokerKind                 = "Broker"
+	addressableAPIVersion      = "duck.knative.dev/v1alpha1"
+	addressableDNS             = "addressable.sink.svc.cluster.local"
+	addressableURI             = "http://addressable.sink.svc.cluster.local"
+	transformerAddressableName = "testtransformer"
 )
 
 func init() {
@@ -66,8 +70,9 @@ func init() {
 	v1.AddToScheme(scheme.Scheme)
 	corev1.AddToScheme(scheme.Scheme)
 	sourcesv1alpha1.SchemeBuilder.AddToScheme(scheme.Scheme)
-	genericv1alpha1.SchemeBuilder.AddToScheme(scheme.Scheme)
+	eventingsourcesv1alpha1.SchemeBuilder.AddToScheme(scheme.Scheme)
 	duckv1alpha1.AddToScheme(scheme.Scheme)
+	eventingv1alpha1.AddToScheme(scheme.Scheme)
 }
 
 type pubSubClientCreatorData struct {
@@ -139,10 +144,21 @@ func TestReconcile(t *testing.T) {
 			},
 			WantErrMsg: "sinks.duck.knative.dev \"testsink\" not found",
 		}, {
+			Name: "cannot get transformURI",
+			InitialState: []runtime.Object{
+				getSource(),
+				getAddressable(),
+			},
+			WantPresent: []runtime.Object{
+				getSourceWithFinalizerAndSinkAndNoTransfomer(),
+			},
+			WantErrMsg: "sinks.duck.knative.dev \"testtransformer\" not found",
+		}, {}, {
 			Name: "cannot create client",
 			InitialState: []runtime.Object{
 				getSource(),
 				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
 			},
 			OtherTestData: map[string]interface{}{
 				pscData: pubSubClientCreatorData{
@@ -150,7 +166,7 @@ func TestReconcile(t *testing.T) {
 				},
 			},
 			WantPresent: []runtime.Object{
-				getSourceWithFinalizerAndSink(),
+				getSourceWithFinalizerAndSinkAndTransformer(),
 			},
 			WantErrMsg: "test-induced-error",
 		}, {
@@ -158,6 +174,7 @@ func TestReconcile(t *testing.T) {
 			InitialState: []runtime.Object{
 				getSource(),
 				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
 			},
 			OtherTestData: map[string]interface{}{
 				pscData: pubSubClientCreatorData{
@@ -165,7 +182,7 @@ func TestReconcile(t *testing.T) {
 				},
 			},
 			WantPresent: []runtime.Object{
-				getSourceWithFinalizerAndSink(),
+				getSourceWithFinalizerAndSinkAndTransformer(),
 			},
 			WantErrMsg: "test-induced-error",
 		}, {
@@ -173,6 +190,7 @@ func TestReconcile(t *testing.T) {
 			InitialState: []runtime.Object{
 				getSource(),
 				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
 			},
 			OtherTestData: map[string]interface{}{
 				pscData: pubSubClientCreatorData{
@@ -180,7 +198,7 @@ func TestReconcile(t *testing.T) {
 				},
 			},
 			WantPresent: []runtime.Object{
-				getSourceWithFinalizerAndSink(),
+				getSourceWithFinalizerAndSinkAndTransformer(),
 			},
 			WantErrMsg: "test-induced-error",
 		}, {
@@ -188,6 +206,7 @@ func TestReconcile(t *testing.T) {
 			InitialState: []runtime.Object{
 				getSource(),
 				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
 			},
 			Mocks: controllertesting.Mocks{
 				MockCreates: []controllertesting.MockCreate{
@@ -203,7 +222,7 @@ func TestReconcile(t *testing.T) {
 				},
 			},
 			WantPresent: []runtime.Object{
-				getSourceWithFinalizerAndSinkAndSubscribed(),
+				getSourceWithFinalizerAndSinkAndTransformerAndSubscribed(),
 			},
 			WantErrMsg: "test-induced-error",
 		}, {
@@ -211,6 +230,7 @@ func TestReconcile(t *testing.T) {
 			InitialState: []runtime.Object{
 				getSource(),
 				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
 			},
 			Mocks: controllertesting.Mocks{
 				MockCreates: []controllertesting.MockCreate{
@@ -220,7 +240,7 @@ func TestReconcile(t *testing.T) {
 				},
 			},
 			WantPresent: []runtime.Object{
-				getSourceWithFinalizerAndSinkAndSubscribed(),
+				getSourceWithFinalizerAndSinkAndTransformerAndSubscribed(),
 			},
 			WantErrMsg: "test-induced-error",
 		}, {
@@ -228,6 +248,7 @@ func TestReconcile(t *testing.T) {
 			InitialState: []runtime.Object{
 				getSource(),
 				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
 			},
 			Mocks: controllertesting.Mocks{
 				MockLists: []controllertesting.MockList{
@@ -237,7 +258,7 @@ func TestReconcile(t *testing.T) {
 				},
 			},
 			WantPresent: []runtime.Object{
-				getSourceWithFinalizerAndSinkAndSubscribed(),
+				getSourceWithFinalizerAndSinkAndTransformerAndSubscribed(),
 			},
 			WantErrMsg: "test-induced-error",
 		}, {
@@ -245,15 +266,17 @@ func TestReconcile(t *testing.T) {
 			InitialState: []runtime.Object{
 				getSource(),
 				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
 			},
 			WantPresent: []runtime.Object{
-				getReadySource(),
+				getReadyAndMarkEventTypeSource(),
 			},
 		}, {
 			Name: "successful create - reuse existing receive adapter",
 			InitialState: []runtime.Object{
 				getSource(),
 				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
 				getReceiveAdapter(),
 			},
 			Mocks: controllertesting.Mocks{
@@ -264,8 +287,57 @@ func TestReconcile(t *testing.T) {
 				},
 			},
 			WantPresent: []runtime.Object{
-				getReadySource(),
+				getReadyAndMarkEventTypeSource(),
 			},
+		}, {
+			Name: "successful create event types",
+			InitialState: []runtime.Object{
+				getSourceWithKind(brokerKind),
+				getAddressableWithNameAndKind(addressableName, brokerKind),
+				getAddressableWithName(transformerAddressableName),
+			},
+			WantPresent: []runtime.Object{
+				getReadyAndMarkEventTypeSourceWithKind(brokerKind),
+				getEventType(),
+			},
+		}, {
+			Name: "successful delete event types",
+			InitialState: []runtime.Object{
+				getSource(),
+				getAddressable(),
+				getAddressableWithName(transformerAddressableName),
+				getEventTypeForSource("name-1", getSource()),
+			},
+			WantPresent: []runtime.Object{
+				getReadyAndMarkEventTypeSource(),
+			},
+			WantAbsent: []runtime.Object{
+				getEventTypeForSource("name-1", getSource()),
+			},
+		}, {
+			Name: "cannot create event types",
+			InitialState: []runtime.Object{
+				getSourceWithKind(brokerKind),
+				getAddressableWithNameAndKind(addressableName, brokerKind),
+				getAddressableWithName(transformerAddressableName),
+			},
+			Mocks: controllertesting.Mocks{
+				MockCreates: []controllertesting.MockCreate{
+					func(_ client.Client, _ context.Context, obj runtime.Object) (controllertesting.MockHandled, error) {
+						if _, ok := obj.(*eventingv1alpha1.EventType); ok {
+							return controllertesting.Handled, errors.New("test-induced-error")
+						}
+						return controllertesting.Unhandled, nil
+					},
+				},
+			},
+			WantAbsent: []runtime.Object{
+				getEventType(),
+			},
+			WantPresent: []runtime.Object{
+				getSourceWithFinalizerAndSinkAndTransformerAndSubscribedAndDeployedAndKind(brokerKind),
+			},
+			WantErrMsg: "test-induced-error",
 		},
 	}
 	for _, tc := range testCases {
@@ -284,22 +356,32 @@ func TestReconcile(t *testing.T) {
 			pubSubClientCreator: createPubSubClientCreator(tc.OtherTestData[pscData]),
 
 			receiveAdapterImage: raImage,
+			eventTypeReconciler: eventtype.Reconciler{
+				Scheme: tc.Scheme,
+			},
 		}
 		r.InjectClient(c)
 		t.Run(tc.Name, tc.Runner(t, r, c))
 	}
 }
 
-func getNonGcpPubSubSource() *genericv1alpha1.ContainerSource {
-	obj := &genericv1alpha1.ContainerSource{
+func getNonGcpPubSubSource() *eventingsourcesv1alpha1.ContainerSource {
+	obj := &eventingsourcesv1alpha1.ContainerSource{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: genericv1alpha1.SchemeGroupVersion.String(),
+			APIVersion: eventingsourcesv1alpha1.SchemeGroupVersion.String(),
 			Kind:       "ContainerSource",
 		},
 		ObjectMeta: om(testNS, sourceName),
-		Spec: genericv1alpha1.ContainerSourceSpec{
-			Image: image,
-			Args:  []string(nil),
+		Spec: eventingsourcesv1alpha1.ContainerSourceSpec{
+			Template: &corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Image: image,
+						Args:  []string(nil),
+					},
+					},
+				},
+			},
 			Sink: &corev1.ObjectReference{
 				Name:       addressableName,
 				Kind:       addressableKind,
@@ -313,6 +395,10 @@ func getNonGcpPubSubSource() *genericv1alpha1.ContainerSource {
 }
 
 func getSource() *sourcesv1alpha1.GcpPubSubSource {
+	return getSourceWithKind(addressableKind)
+}
+
+func getSourceWithKind(kind string) *sourcesv1alpha1.GcpPubSubSource {
 	obj := &sourcesv1alpha1.GcpPubSubSource{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: sourcesv1alpha1.SchemeGroupVersion.String(),
@@ -330,6 +416,11 @@ func getSource() *sourcesv1alpha1.GcpPubSubSource {
 			Topic:              "laconia",
 			Sink: &corev1.ObjectReference{
 				Name:       addressableName,
+				Kind:       kind,
+				APIVersion: addressableAPIVersion,
+			},
+			Transformer: &corev1.ObjectReference{
+				Name:       transformerAddressableName,
 				Kind:       addressableKind,
 				APIVersion: addressableAPIVersion,
 			},
@@ -338,6 +429,40 @@ func getSource() *sourcesv1alpha1.GcpPubSubSource {
 	// selflink is not filled in when we create the object, so clear it
 	obj.ObjectMeta.SelfLink = ""
 	return obj
+}
+
+func getEventType() *eventingv1alpha1.EventType {
+	return getEventTypeForSource("", getSourceWithKind(brokerKind))
+}
+
+func getEventTypeForSource(name string, src *sourcesv1alpha1.GcpPubSubSource) *eventingv1alpha1.EventType {
+	return &eventingv1alpha1.EventType{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: eventingv1alpha1.SchemeGroupVersion.String(),
+			Kind:       "EventType",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         sourcesv1alpha1.SchemeGroupVersion.String(),
+					Kind:               "GcpPubSubSource",
+					Name:               sourceName,
+					Controller:         &trueVal,
+					BlockOwnerDeletion: &trueVal,
+					UID:                sourceUID,
+				},
+			},
+			Name:         name,
+			GenerateName: fmt.Sprintf("%s-", sourcesv1alpha1.GcpPubSubSourceEventType),
+			Namespace:    testNS,
+			Labels:       getLabels(src),
+		},
+		Spec: eventingv1alpha1.EventTypeSpec{
+			Type:   sourcesv1alpha1.GcpPubSubSourceEventType,
+			Source: sourcesv1alpha1.GcpPubSubEventSource("my-gcp-project", "laconia"),
+			Broker: addressableName,
+		},
+	}
 }
 
 func getDeletingSourceWithoutFinalizer() *sourcesv1alpha1.GcpPubSubSource {
@@ -365,21 +490,59 @@ func getSourceWithFinalizerAndNoSink() *sourcesv1alpha1.GcpPubSubSource {
 	return src
 }
 
+func getSourceWithFinalizerAndSinkAndNoTransfomer() *sourcesv1alpha1.GcpPubSubSource {
+	src := getSourceWithFinalizer()
+	src.Status.MarkSink(addressableURI)
+	src.Status.MarkNoTransformer("NotFound", "")
+	return src
+}
+
 func getSourceWithFinalizerAndSink() *sourcesv1alpha1.GcpPubSubSource {
 	src := getSourceWithFinalizer()
 	src.Status.MarkSink(addressableURI)
 	return src
 }
 
-func getSourceWithFinalizerAndSinkAndSubscribed() *sourcesv1alpha1.GcpPubSubSource {
+func getSourceWithFinalizerAndSinkAndTransformer() *sourcesv1alpha1.GcpPubSubSource {
 	src := getSourceWithFinalizerAndSink()
+	src.Status.MarkTransformer(addressableURI)
+	return src
+}
+
+func getSourceWithFinalizerAndSinkAndTransformerAndSubscribed() *sourcesv1alpha1.GcpPubSubSource {
+	src := getSourceWithFinalizerAndSinkAndTransformer()
 	src.Status.MarkSubscribed()
 	return src
 }
 
-func getReadySource() *sourcesv1alpha1.GcpPubSubSource {
-	src := getSourceWithFinalizerAndSinkAndSubscribed()
+func getSourceWithFinalizerAndSinkAndTransformerAndSubscribedAndDeployedAndKind(kind string) *sourcesv1alpha1.GcpPubSubSource {
+	src := getSourceWithFinalizerAndSinkAndTransformerAndSubscribed()
 	src.Status.MarkDeployed()
+	src.Spec.Sink.Kind = kind
+	return src
+}
+
+func getReadySource() *sourcesv1alpha1.GcpPubSubSource {
+	src := getSourceWithFinalizerAndSinkAndTransformerAndSubscribed()
+	src.Status.MarkDeployed()
+	return src
+}
+
+func getReadySourceWithKind(kind string) *sourcesv1alpha1.GcpPubSubSource {
+	src := getReadySource()
+	src.Spec.Sink.Kind = kind
+	return src
+}
+
+func getReadyAndMarkEventTypeSource() *sourcesv1alpha1.GcpPubSubSource {
+	src := getReadySource()
+	src.Status.MarkEventTypes()
+	return src
+}
+
+func getReadyAndMarkEventTypeSourceWithKind(kind string) *sourcesv1alpha1.GcpPubSubSource {
+	src := getReadySourceWithKind(kind)
+	src.Status.MarkEventTypes()
 	return src
 }
 
@@ -411,13 +574,21 @@ func createPubSubClientCreator(value interface{}) pubSubClientCreator {
 }
 
 func getAddressable() *unstructured.Unstructured {
+	return getAddressableWithNameAndKind(addressableName, addressableKind)
+}
+
+func getAddressableWithName(name string) *unstructured.Unstructured {
+	return getAddressableWithNameAndKind(name, addressableKind)
+}
+
+func getAddressableWithNameAndKind(name, kind string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": addressableAPIVersion,
-			"kind":       addressableKind,
+			"kind":       kind,
 			"metadata": map[string]interface{}{
 				"namespace": testNS,
-				"name":      addressableName,
+				"name":      name,
 			},
 			"status": map[string]interface{}{
 				"address": map[string]interface{}{

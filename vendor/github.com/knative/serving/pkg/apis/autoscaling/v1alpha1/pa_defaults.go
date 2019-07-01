@@ -17,12 +17,25 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
+
+	"knative.dev/pkg/apis"
 	"github.com/knative/serving/pkg/apis/autoscaling"
-	servingv1alpha1 "github.com/knative/serving/pkg/apis/serving/v1alpha1"
 )
 
-func (r *PodAutoscaler) SetDefaults() {
-	r.Spec.SetDefaults()
+func defaultMetric(class string) string {
+	switch class {
+	case autoscaling.KPA:
+		return autoscaling.Concurrency
+	case autoscaling.HPA:
+		return autoscaling.CPU
+	default:
+		return ""
+	}
+}
+
+func (r *PodAutoscaler) SetDefaults(ctx context.Context) {
+	r.Spec.SetDefaults(apis.WithinSpec(ctx))
 	if r.Annotations == nil {
 		r.Annotations = make(map[string]string)
 	}
@@ -31,22 +44,9 @@ func (r *PodAutoscaler) SetDefaults() {
 		r.Annotations[autoscaling.ClassAnnotationKey] = autoscaling.KPA
 	}
 	// Default metric per class
-	switch r.Class() {
-	case autoscaling.KPA:
-		if _, ok := r.Annotations[autoscaling.MetricAnnotationKey]; !ok {
-			r.Annotations[autoscaling.MetricAnnotationKey] = autoscaling.Concurrency
-		}
-	case autoscaling.HPA:
-		if _, ok := r.Annotations[autoscaling.MetricAnnotationKey]; !ok {
-			r.Annotations[autoscaling.MetricAnnotationKey] = autoscaling.CPU
-		}
+	if _, ok := r.Annotations[autoscaling.MetricAnnotationKey]; !ok {
+		r.Annotations[autoscaling.MetricAnnotationKey] = defaultMetric(r.Class())
 	}
 }
 
-func (rs *PodAutoscalerSpec) SetDefaults() {
-	// When ConcurrencyModel is specified but ContainerConcurrency
-	// is not (0), use the ConcurrencyModel value.
-	if rs.ConcurrencyModel == servingv1alpha1.RevisionRequestConcurrencyModelSingle && rs.ContainerConcurrency == 0 {
-		rs.ContainerConcurrency = 1
-	}
-}
+func (rs *PodAutoscalerSpec) SetDefaults(ctx context.Context) {}

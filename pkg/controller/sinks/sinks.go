@@ -20,10 +20,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/knative/pkg/apis/duck"
-	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"knative.dev/pkg/apis/duck"
+	duckv1alpha1 "knative.dev/pkg/apis/duck/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -42,6 +42,10 @@ func GetSinkURI(ctx context.Context, c client.Client, sink *corev1.ObjectReferen
 	}
 
 	objIdentifier := fmt.Sprintf("\"%s/%s\" (%s)", u.GetNamespace(), u.GetName(), u.GroupVersionKind())
+	// Special case v1/Service to allow it be addressable
+	if u.GroupVersionKind().Kind == "Service" && u.GroupVersionKind().Version == "v1" {
+		return fmt.Sprintf("http://%s.%s.svc/", u.GetName(), u.GetNamespace()), nil
+	}
 
 	t := duckv1alpha1.AddressableType{}
 	err = duck.FromUnstructured(u, &t)
@@ -53,9 +57,9 @@ func GetSinkURI(ctx context.Context, c client.Client, sink *corev1.ObjectReferen
 		return "", fmt.Errorf("sink %s does not contain address", objIdentifier)
 	}
 
-	if t.Status.Address.Hostname == "" {
+	url := t.Status.Address.GetURL()
+	if url.Host == "" {
 		return "", fmt.Errorf("sink %s contains an empty hostname", objIdentifier)
 	}
-
-	return fmt.Sprintf("http://%s/", t.Status.Address.Hostname), nil
+	return url.String(), nil
 }

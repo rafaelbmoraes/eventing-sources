@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/knative/eventing-sources/contrib/gcppubsub/pkg/apis/sources/v1alpha1"
+	"github.com/knative/eventing-contrib/contrib/gcppubsub/pkg/apis/sources/v1alpha1"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,6 +54,7 @@ func TestMakeReceiveAdapter(t *testing.T) {
 		},
 		SubscriptionID: "sub-id",
 		SinkURI:        "sink-uri",
+		TransformerURI: "transformer-uri",
 	})
 
 	one := int32(1)
@@ -110,6 +111,10 @@ func TestMakeReceiveAdapter(t *testing.T) {
 								{
 									Name:  "SINK_URI",
 									Value: "sink-uri",
+								},
+								{
+									Name:  "TRANSFORMER_URI",
+									Value: "transformer-uri",
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{

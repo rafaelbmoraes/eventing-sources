@@ -1,3 +1,20 @@
+/*
+Licensed to the Apache Software Foundation (ASF) under one or more
+contributor license agreements.  See the NOTICE file distributed with
+this work for additional information regarding copyright ownership.
+The ASF licenses this file to You under the Apache License, Version 2.0
+(the "License"); you may not use this file except in compliance with
+the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
@@ -8,27 +25,30 @@ import (
 
 // IntegrationSpec defines the desired state of Integration
 type IntegrationSpec struct {
-	Replicas           *int32                          `json:"replicas,omitempty"`
-	Sources            []SourceSpec                    `json:"sources,omitempty"`
-	Resources          []ResourceSpec                  `json:"resources,omitempty"`
-	Context            string                          `json:"context,omitempty"`
-	Dependencies       []string                        `json:"dependencies,omitempty"`
-	Profile            TraitProfile                    `json:"profile,omitempty"`
-	Traits             map[string]IntegrationTraitSpec `json:"traits,omitempty"`
-	Configuration      []ConfigurationSpec             `json:"configuration,omitempty"`
-	Repositories       []string                        `json:"repositories,omitempty"`
-	ServiceAccountName string                          `json:"serviceAccountName,omitempty"`
+	Replicas           *int32               `json:"replicas,omitempty"`
+	Sources            []SourceSpec         `json:"sources,omitempty"`
+	Resources          []ResourceSpec       `json:"resources,omitempty"`
+	Context            string               `json:"context,omitempty"`
+	Dependencies       []string             `json:"dependencies,omitempty"`
+	Profile            TraitProfile         `json:"profile,omitempty"`
+	Traits             map[string]TraitSpec `json:"traits,omitempty"`
+	Configuration      []ConfigurationSpec  `json:"configuration,omitempty"`
+	Repositories       []string             `json:"repositories,omitempty"`
+	ServiceAccountName string               `json:"serviceAccountName,omitempty"`
 }
 
 // IntegrationStatus defines the observed state of Integration
 type IntegrationStatus struct {
-	Phase            IntegrationPhase `json:"phase,omitempty"`
-	Digest           string           `json:"digest,omitempty"`
-	Image            string           `json:"image,omitempty"`
-	Dependencies     []string         `json:"dependencies,omitempty"`
-	Context          string           `json:"context,omitempty"`
-	GeneratedSources []SourceSpec     `json:"generatedSources,omitempty"`
-	Failure          *Failure         `json:"failure,omitempty"`
+	Phase            IntegrationPhase    `json:"phase,omitempty"`
+	Digest           string              `json:"digest,omitempty"`
+	Image            string              `json:"image,omitempty"`
+	Dependencies     []string            `json:"dependencies,omitempty"`
+	Context          string              `json:"context,omitempty"`
+	GeneratedSources []SourceSpec        `json:"generatedSources,omitempty"`
+	Failure          *Failure            `json:"failure,omitempty"`
+	CamelVersion     string              `json:"camelVersion,omitempty"`
+	RuntimeVersion   string              `json:"runtimeVersion,omitempty"`
+	Configuration    []ConfigurationSpec `json:"configuration,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -57,6 +77,7 @@ type DataSpec struct {
 	Name        string `json:"name,omitempty"`
 	Content     string `json:"content,omitempty"`
 	ContentRef  string `json:"contentRef,omitempty"`
+	ContentKey  string `json:"contentKey,omitempty"`
 	Compression bool   `json:"compression,omitempty"`
 }
 
@@ -66,7 +87,8 @@ type ResourceType string
 // ResourceSpec --
 type ResourceSpec struct {
 	DataSpec
-	Type ResourceType `json:"type,omitempty"`
+	Type      ResourceType `json:"type,omitempty"`
+	MountPath string       `json:"mountPath,omitempty"`
 }
 
 const (
@@ -106,16 +128,11 @@ const (
 var Languages = []Language{
 	LanguageJavaSource,
 	LanguageJavaClass,
-	LanguageJavaScript,
 	LanguageGroovy,
 	LanguageJavaScript,
+	LanguageXML,
 	LanguageKotlin,
 	LanguageYamlFlow,
-}
-
-// A IntegrationTraitSpec contains the configuration of a trait
-type IntegrationTraitSpec struct {
-	Configuration map[string]string `json:"configuration,omitempty"`
 }
 
 // IntegrationPhase --
@@ -131,16 +148,16 @@ const (
 	IntegrationPhaseWaitingForPlatform IntegrationPhase = "Waiting For Platform"
 	// IntegrationPhaseBuildingContext --
 	IntegrationPhaseBuildingContext IntegrationPhase = "Building Context"
-	// IntegrationPhaseBuildingImage --
-	IntegrationPhaseBuildingImage IntegrationPhase = "Building Image"
+	// IntegrationPhaseResolvingContext --
+	IntegrationPhaseResolvingContext IntegrationPhase = "Resolving Context"
 	// IntegrationPhaseDeploying --
 	IntegrationPhaseDeploying IntegrationPhase = "Deploying"
 	// IntegrationPhaseRunning --
 	IntegrationPhaseRunning IntegrationPhase = "Running"
 	// IntegrationPhaseError --
 	IntegrationPhaseError IntegrationPhase = "Error"
-	// IntegrationPhaseBuildFailureRecovery --
-	IntegrationPhaseBuildFailureRecovery IntegrationPhase = "Building Failure Recovery"
+	// IntegrationPhaseDeleting --
+	IntegrationPhaseDeleting IntegrationPhase = "Deleting"
 )
 
 func init() {

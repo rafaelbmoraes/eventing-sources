@@ -19,7 +19,7 @@ package sdk
 import (
 	"testing"
 
-	"github.com/knative/eventing-sources/pkg/apis/sources/v1alpha1"
+	"github.com/knative/eventing-contrib/contrib/awssqs/pkg/apis/sources/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -46,16 +46,16 @@ func TestNewReflectedFinalizersAccessor(t *testing.T) {
 			expectedErr: true,
 		},
 		"no finalizers set": {
-			obj:        &v1alpha1.ContainerSource{},
+			obj:        &v1alpha1.AwsSqsSource{},
 			finalizers: sets.NewString(),
 		},
 		"set finalizers": {
-			obj:           &v1alpha1.ContainerSource{},
+			obj:           &v1alpha1.AwsSqsSource{},
 			finalizers:    sets.NewString(),
 			setFinalizers: sets.NewString("newFinalizer"),
 		},
 		"replace finalizers": {
-			obj: &v1alpha1.ContainerSource{
+			obj: &v1alpha1.AwsSqsSource{
 				ObjectMeta: v1.ObjectMeta{
 					Finalizers: []string{
 						"oldFinalizer",

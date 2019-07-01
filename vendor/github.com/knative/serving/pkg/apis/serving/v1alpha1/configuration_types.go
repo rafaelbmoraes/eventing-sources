@@ -17,11 +17,11 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"github.com/knative/pkg/apis"
-	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
-	"github.com/knative/pkg/kmeta"
+	"knative.dev/pkg/apis"
+	duckv1beta1 "knative.dev/pkg/apis/duck/v1beta1"
+	"knative.dev/pkg/kmeta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // +genclient
@@ -47,15 +47,18 @@ type Configuration struct {
 	Status ConfigurationStatus `json:"status,omitempty"`
 }
 
-// Check that Configuration may be validated and defaulted.
-var _ apis.Validatable = (*Configuration)(nil)
-var _ apis.Defaultable = (*Configuration)(nil)
+// Verify that Configuration adheres to the appropriate interfaces.
+var (
+	// Check that Configuration may be validated and defaulted.
+	_ apis.Validatable = (*Configuration)(nil)
+	_ apis.Defaultable = (*Configuration)(nil)
 
-// Check that we can create OwnerReferences to a Configuration.
-var _ kmeta.OwnerRefable = (*Configuration)(nil)
+	// Check that Configuration can be converted to higher versions.
+	_ apis.Convertible = (*Configuration)(nil)
 
-// Check that ConfigurationStatus may have its conditions managed.
-var _ duckv1alpha1.ConditionsAccessor = (*ConfigurationStatus)(nil)
+	// Check that we can create OwnerReferences to a Configuration.
+	_ kmeta.OwnerRefable = (*Configuration)(nil)
+)
 
 // ConfigurationSpec holds the desired state of the Configuration (from the client).
 type ConfigurationSpec struct {
@@ -73,32 +76,32 @@ type ConfigurationSpec struct {
 	// Build optionally holds the specification for the build to
 	// perform to produce the Revision's container image.
 	// +optional
-	Build *RawExtension `json:"build,omitempty"`
+	DeprecatedBuild *runtime.RawExtension `json:"build,omitempty"`
 
-	// RevisionTemplate holds the latest specification for the Revision to
+	// DeprecatedRevisionTemplate holds the latest specification for the Revision to
 	// be stamped out. If a Build specification is provided, then the
-	// RevisionTemplate's BuildName field will be populated with the name of
+	// DeprecatedRevisionTemplate's BuildName field will be populated with the name of
 	// the Build object created to produce the container for the Revision.
+	// DEPRECATED Use Template instead.
 	// +optional
-	RevisionTemplate RevisionTemplateSpec `json:"revisionTemplate"`
+	DeprecatedRevisionTemplate *RevisionTemplateSpec `json:"revisionTemplate,omitempty"`
+
+	// Template holds the latest specification for the Revision to
+	// be stamped out.
+	// +optional
+	Template *RevisionTemplateSpec `json:"template,omitempty"`
 }
 
 const (
 	// ConfigurationConditionReady is set when the configuration's latest
 	// underlying revision has reported readiness.
-	ConfigurationConditionReady = duckv1alpha1.ConditionReady
+	ConfigurationConditionReady = apis.ConditionReady
 )
 
-var confCondSet = duckv1alpha1.NewLivingConditionSet()
-
-// ConfigurationStatus communicates the observed state of the Configuration (from the controller).
-type ConfigurationStatus struct {
-	// Conditions communicates information about ongoing/complete
-	// reconciliation processes that bring the "spec" inline with the observed
-	// state of the world.
-	// +optional
-	Conditions duckv1alpha1.Conditions `json:"conditions,omitempty"`
-
+// ConfigurationStatusFields holds all of the non-duckv1beta1.Status status fields of a Route.
+// These are defined outline so that we can also inline them into Service, and more easily
+// copy them.
+type ConfigurationStatusFields struct {
 	// LatestReadyRevisionName holds the name of the latest Revision stamped out
 	// from this Configuration that has had its "Ready" condition become "True".
 	// +optional
@@ -108,12 +111,13 @@ type ConfigurationStatus struct {
 	// Configuration. It might not be ready yet, for that use LatestReadyRevisionName.
 	// +optional
 	LatestCreatedRevisionName string `json:"latestCreatedRevisionName,omitempty"`
+}
 
-	// ObservedGeneration is the 'Generation' of the Configuration that
-	// was last processed by the controller. The observed generation is updated
-	// even if the controller failed to process the spec and create the Revision.
-	// +optional
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+// ConfigurationStatus communicates the observed state of the Configuration (from the controller).
+type ConfigurationStatus struct {
+	duckv1beta1.Status `json:",inline"`
+
+	ConfigurationStatusFields `json:",inline"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -124,77 +128,4 @@ type ConfigurationList struct {
 	metav1.ListMeta `json:"metadata"`
 
 	Items []Configuration `json:"items"`
-}
-
-func (r *Configuration) GetGroupVersionKind() schema.GroupVersionKind {
-	return SchemeGroupVersion.WithKind("Configuration")
-}
-
-// IsReady looks at the conditions to see if they are happy.
-func (cs *ConfigurationStatus) IsReady() bool {
-	return confCondSet.Manage(cs).IsHappy()
-}
-
-// IsLatestReadyRevisionNameUpToDate returns true if the Configuration is ready
-// and LatestCreateRevisionName is equal to LatestReadyRevisionName. Otherwise
-// it returns false.
-func (cs *ConfigurationStatus) IsLatestReadyRevisionNameUpToDate() bool {
-	return cs.IsReady() &&
-		cs.LatestCreatedRevisionName == cs.LatestReadyRevisionName
-}
-
-func (cs *ConfigurationStatus) GetCondition(t duckv1alpha1.ConditionType) *duckv1alpha1.Condition {
-	return confCondSet.Manage(cs).GetCondition(t)
-}
-
-func (cs *ConfigurationStatus) InitializeConditions() {
-	confCondSet.Manage(cs).InitializeConditions()
-}
-
-func (cs *ConfigurationStatus) SetLatestCreatedRevisionName(name string) {
-	cs.LatestCreatedRevisionName = name
-	if cs.LatestReadyRevisionName != name {
-		confCondSet.Manage(cs).MarkUnknown(
-			ConfigurationConditionReady,
-			"",
-			"")
-	}
-}
-
-func (cs *ConfigurationStatus) SetLatestReadyRevisionName(name string) {
-	cs.LatestReadyRevisionName = name
-	confCondSet.Manage(cs).MarkTrue(ConfigurationConditionReady)
-}
-
-func (cs *ConfigurationStatus) MarkLatestCreatedFailed(name, message string) {
-	confCondSet.Manage(cs).MarkFalse(
-		ConfigurationConditionReady,
-		"RevisionFailed",
-		"Revision %q failed with message: %s.", name, message)
-}
-
-func (cs *ConfigurationStatus) MarkRevisionCreationFailed(message string) {
-	confCondSet.Manage(cs).MarkFalse(
-		ConfigurationConditionReady,
-		"RevisionFailed",
-		"Revision creation failed with message: %s.", message)
-}
-
-func (cs *ConfigurationStatus) MarkLatestReadyDeleted() {
-	confCondSet.Manage(cs).MarkFalse(
-		ConfigurationConditionReady,
-		"RevisionDeleted",
-		"Revision %q was deleted.", cs.LatestReadyRevisionName)
-}
-
-// GetConditions returns the Conditions array. This enables generic handling of
-// conditions by implementing the duckv1alpha1.Conditions interface.
-func (cs *ConfigurationStatus) GetConditions() duckv1alpha1.Conditions {
-	return cs.Conditions
-}
-
-// SetConditions sets the Conditions array. This enables generic handling of
-// conditions by implementing the duckv1alpha1.Conditions interface.
-func (cs *ConfigurationStatus) SetConditions(conditions duckv1alpha1.Conditions) {
-	cs.Conditions = conditions
 }

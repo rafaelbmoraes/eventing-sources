@@ -21,12 +21,12 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/knative/pkg/logging"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
+	"knative.dev/pkg/logging"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
@@ -36,6 +36,7 @@ type Reconciler struct {
 	client   client.Client
 	recorder record.EventRecorder
 	scheme   *runtime.Scheme
+	logger   zap.SugaredLogger
 
 	provider Provider
 }
@@ -46,7 +47,7 @@ var _ reconcile.Reconciler = &Reconciler{}
 // Reconcile compares the actual state with the desired, and attempts to
 // converge the two.
 func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	ctx := context.TODO()
+	ctx := logging.WithLogger(context.TODO(), r.logger.With(zap.Any("request", request)))
 	logger := logging.FromContext(ctx)
 
 	logger.Infof("Reconciling %s %v", r.provider.Parent.GetObjectKind(), request)

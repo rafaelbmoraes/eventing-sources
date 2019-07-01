@@ -22,18 +22,13 @@ import (
 	"log"
 	"os"
 
-	"github.com/knative/eventing-sources/pkg/controller/sdk"
-
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-
-	"github.com/knative/eventing-sources/contrib/gcppubsub/pkg/reconciler/resources"
-
-	"github.com/knative/eventing-sources/pkg/controller/sinks"
-
 	"cloud.google.com/go/pubsub"
-	"github.com/knative/eventing-sources/contrib/gcppubsub/pkg/apis/sources/v1alpha1"
-	"github.com/knative/pkg/logging"
+	"github.com/knative/eventing-contrib/contrib/gcppubsub/pkg/apis/sources/v1alpha1"
+	"github.com/knative/eventing-contrib/contrib/gcppubsub/pkg/reconciler/resources"
+	"github.com/knative/eventing-contrib/pkg/controller/sdk"
+	"github.com/knative/eventing-contrib/pkg/controller/sinks"
+	"github.com/knative/eventing-contrib/pkg/reconciler/eventtype"
+	eventingv1alpha1 "github.com/knative/eventing/pkg/apis/eventing/v1alpha1"
 	"go.uber.org/zap"
 	v1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -42,7 +37,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"knative.dev/pkg/logging"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 const (
@@ -60,7 +58,7 @@ const (
 // Add creates a new GcpPubSubSource Controller and adds it to the Manager with
 // default RBAC. The Manager will set fields on the Controller and Start it when
 // the Manager is Started.
-func Add(mgr manager.Manager) error {
+func Add(mgr manager.Manager, logger *zap.SugaredLogger) error {
 	raImage, defined := os.LookupEnv(raImageEnvVar)
 	if !defined {
 		return fmt.Errorf("required environment variable '%s' not defined", raImageEnvVar)
@@ -70,15 +68,18 @@ func Add(mgr manager.Manager) error {
 	p := &sdk.Provider{
 		AgentName: controllerAgentName,
 		Parent:    &v1alpha1.GcpPubSubSource{},
-		Owns:      []runtime.Object{&v1.Deployment{}},
+		Owns:      []runtime.Object{&v1.Deployment{}, &eventingv1alpha1.EventType{}},
 		Reconciler: &reconciler{
 			scheme:              mgr.GetScheme(),
 			pubSubClientCreator: gcpPubSubClientCreator,
 			receiveAdapterImage: raImage,
+			eventTypeReconciler: eventtype.Reconciler{
+				Scheme: mgr.GetScheme(),
+			},
 		},
 	}
 
-	return p.Add(mgr)
+	return p.Add(mgr, logger)
 }
 
 // gcpPubSubClientCreator creates a real GCP PubSub client. It should always be used, except during
@@ -100,12 +101,13 @@ type reconciler struct {
 	scheme *runtime.Scheme
 
 	pubSubClientCreator pubSubClientCreator
-
 	receiveAdapterImage string
+	eventTypeReconciler eventtype.Reconciler
 }
 
 func (r *reconciler) InjectClient(c client.Client) error {
 	r.client = c
+	r.eventTypeReconciler.Client = c
 	return nil
 }
 
@@ -125,6 +127,8 @@ func (r *reconciler) Reconcile(ctx context.Context, object runtime.Object) error
 	//     - Will be garbage collected by K8s when this GcpPubSubSource is deleted.
 	// 3. Register that receive adapter as a Pull endpoint for the specified GCP PubSub Topic.
 	//     - This needs to deregister during deletion.
+	// 4. Create the EventTypes that it can emit.
+	//     - Will be garbage collected by K8s when this GcpPubSubSource is deleted.
 	// Because there is something that must happen during deletion, we add this controller as a
 	// finalizer to every GcpPubSubSource.
 
@@ -151,6 +155,16 @@ func (r *reconciler) Reconcile(ctx context.Context, object runtime.Object) error
 	}
 	src.Status.MarkSink(sinkURI)
 
+	var transformerURI string
+	if src.Spec.Transformer != nil {
+		transformerURI, err = sinks.GetSinkURI(ctx, r.client, src.Spec.Transformer, src.Namespace)
+		if err != nil {
+			src.Status.MarkNoTransformer("NotFound", "")
+			return err
+		}
+		src.Status.MarkTransformer(transformerURI)
+	}
+
 	sub, err := r.createSubscription(ctx, src)
 	if err != nil {
 		logger.Error("Unable to create the subscription", zap.Error(err))
@@ -158,12 +172,19 @@ func (r *reconciler) Reconcile(ctx context.Context, object runtime.Object) error
 	}
 	src.Status.MarkSubscribed()
 
-	_, err = r.createReceiveAdapter(ctx, src, sub.ID(), sinkURI)
+	_, err = r.createReceiveAdapter(ctx, src, sub.ID(), sinkURI, transformerURI)
 	if err != nil {
 		logger.Error("Unable to create the receive adapter", zap.Error(err))
 		return err
 	}
 	src.Status.MarkDeployed()
+
+	err = r.reconcileEventTypes(ctx, src)
+	if err != nil {
+		logger.Error("Unable to reconcile the event types", zap.Error(err))
+		return err
+	}
+	src.Status.MarkEventTypes()
 
 	return nil
 }
@@ -180,7 +201,7 @@ func (r *reconciler) removeFinalizer(s *v1alpha1.GcpPubSubSource) {
 	s.Finalizers = finalizers.List()
 }
 
-func (r *reconciler) createReceiveAdapter(ctx context.Context, src *v1alpha1.GcpPubSubSource, subscriptionID, sinkURI string) (*v1.Deployment, error) {
+func (r *reconciler) createReceiveAdapter(ctx context.Context, src *v1alpha1.GcpPubSubSource, subscriptionID, sinkURI, transformerURI string) (*v1.Deployment, error) {
 	ra, err := r.getReceiveAdapter(ctx, src)
 	if err != nil && !apierrors.IsNotFound(err) {
 		logging.FromContext(ctx).Error("Unable to get an existing receive adapter", zap.Error(err))
@@ -196,6 +217,7 @@ func (r *reconciler) createReceiveAdapter(ctx context.Context, src *v1alpha1.Gcp
 		Labels:         getLabels(src),
 		SubscriptionID: subscriptionID,
 		SinkURI:        sinkURI,
+		TransformerURI: transformerURI,
 	})
 	if err := controllerutil.SetControllerReference(src, svc, r.scheme); err != nil {
 		return nil, err
@@ -279,6 +301,27 @@ func (r *reconciler) deleteSubscription(ctx context.Context, src *v1alpha1.GcpPu
 		return nil
 	}
 	return sub.Delete(ctx)
+}
+
+func (r *reconciler) reconcileEventTypes(ctx context.Context, src *v1alpha1.GcpPubSubSource) error {
+	args := r.newEventTypeReconcilerArgs(src)
+	return r.eventTypeReconciler.Reconcile(ctx, src, args)
+}
+
+func (r *reconciler) newEventTypeReconcilerArgs(src *v1alpha1.GcpPubSubSource) *eventtype.ReconcilerArgs {
+	spec := eventingv1alpha1.EventTypeSpec{
+		Type:   v1alpha1.GcpPubSubSourceEventType,
+		Source: v1alpha1.GcpPubSubEventSource(src.Spec.GoogleCloudProject, src.Spec.Topic),
+		Broker: src.Spec.Sink.Name,
+	}
+	specs := make([]eventingv1alpha1.EventTypeSpec, 0, 1)
+	specs = append(specs, spec)
+	return &eventtype.ReconcilerArgs{
+		Specs:     specs,
+		Namespace: src.Namespace,
+		Labels:    getLabels(src),
+		Kind:      src.Spec.Sink.Kind,
+	}
 }
 
 func generateSubName(src *v1alpha1.GcpPubSubSource) string {

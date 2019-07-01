@@ -5,8 +5,10 @@ import (
 	nethttp "net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
+// Option is the function signature required to be considered an http.Option.
 type Option func(*Transport) error
 
 // WithTarget sets the outbound recipient of cloudevents when using an HTTP
@@ -53,6 +55,39 @@ func WithMethod(method string) Option {
 			return nil
 		}
 		return fmt.Errorf("http method option was empty string")
+	}
+}
+
+// WithHeader sets an additional default outbound header for all cloudevents
+// when using an HTTP request.
+func WithHeader(key, value string) Option {
+	return func(t *Transport) error {
+		if t == nil {
+			return fmt.Errorf("http header option can not set nil transport")
+		}
+		key = strings.TrimSpace(key)
+		if key != "" {
+			if t.Req == nil {
+				t.Req = &nethttp.Request{}
+			}
+			if t.Req.Header == nil {
+				t.Req.Header = nethttp.Header{}
+			}
+			t.Req.Header.Add(key, value)
+			return nil
+		}
+		return fmt.Errorf("http header option was empty string")
+	}
+}
+
+// WithShutdownTimeout sets the shutdown timeout when the http server is being shutdown.
+func WithShutdownTimeout(timeout time.Duration) Option {
+	return func(t *Transport) error {
+		if t == nil {
+			return fmt.Errorf("http shutdown timeout option can not set nil transport")
+		}
+		t.ShutdownTimeout = &timeout
+		return nil
 	}
 }
 
@@ -135,6 +170,23 @@ func WithPath(path string) Option {
 			return fmt.Errorf("http path option was given an invalid path: %q", path)
 		}
 		t.Path = path
+		return nil
+	}
+}
+
+// Middleware is a function that takes an existing http.Handler and wraps it in middleware,
+// returning the wrapped http.Handler.
+type Middleware func(next nethttp.Handler) nethttp.Handler
+
+// WithMiddleware adds an HTTP middleware to the transport. It may be specified multiple times.
+// Middleware is applied to everything before it. For example
+// `NewClient(WithMiddleware(foo), WithMiddleware(bar))` would result in `bar(foo(original))`.
+func WithMiddleware(middleware Middleware) Option {
+	return func (t *Transport) error {
+		if t == nil {
+			return fmt.Errorf("http middleware option can not set nil transport")
+		}
+		t.middleware = append(t.middleware, middleware)
 		return nil
 	}
 }
